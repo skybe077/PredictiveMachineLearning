@@ -2,13 +2,16 @@
 title: "Machine Learning Project Writeup: Did They Bend It Right?"
 author: "Edwin Tam"
 date: "7 May 2016"
-output: html_document
+output: 
+  html_document: 
+    keep_md: yes
 ---
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(xlsx)
 library(caret)
 library(factoextra)
 
+# loading saved content to reduce 
 pmlTest <- readRDS("pmlTest.rds")
 pmlTrain <- readRDS("pmlTrain.rds")
 rfFit <- readRDS("rfFit.Rds")
