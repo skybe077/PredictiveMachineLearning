@@ -1,0 +1,322 @@
+---
+title: "Machine Learning Project Writeup: Did They Bend It Right?"
+author: "Edwin Tam"
+date: "7 May 2016"
+output: html_document
+---
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(xlsx)
+library(caret)
+library(factoextra)
+
+pmlTest <- readRDS("pmlTest.rds")
+pmlTrain <- readRDS("pmlTrain.rds")
+rfFit <- readRDS("rfFit.Rds")
+ 
+pml <- read.csv("data/pml-training.csv")
+```
+
+
+A study of unilateral dumbbell exercise enthusiasts to answer the question: Are they doing the exercise correctly? If not, use a set of datapoints to determine how they do it wrongly.
+
+## Overview 
+
+The Human Activity Recognition Project at Groupware@LES investigated "how well" an activity was performed by accelerometer wearers. They correctly and incorrectly executed an exercise – unilateral dumbbell bicep curls – in 5 different ways and measurements were taken and tabulated. 
+
+This project is meant to predict the way which 6 participants did the exercise by training them against a set of known outcomes (i.e. classe). Measurements are taken from 4 places: waist (belt), arm, forearm, and dumbbell. 
+
+
+Classe	| Type
+--------|----------
+A	| Strict form. Correct exercise method
+B	| Throwing elbows forward
+C | Dumbbells raised halfway up
+D | Dumbbells lowered halfway down 
+E | Throw hips forward
+
+The rest of this writeup consists of:
+
+1. Review & Clean the Dataset 
+2. Prediction Model & Assumptions 
+3. Cross-validation and Errors made
+4. Conclusion
+
+See Appendix A: Code for the entire program code used in this project.
+
+## 1.	Review & Clean the Dataset 
+
+In a nutshell, there are 159 variables. Of which 8 variables contain user, timestamp, and classe information. The remaining 151 variables measure movement, magnitude and stats at the 4 places. 
+In general, these variables include: 
+
+Category | Names
+---------|-------------
+Direction | Pitch (ptich), yaw, roll, x, y, z
+Magnitude | accel, amplitude, max, min
+Statistics | Kurtosis, skewness, stddev, var  
+Unknown | gyros, magnet
+
+Given the number of variables, I wanted to see if I could reduce the variable set (aka reduce its dimensionality) to make it more manageable. One way of doing so is to use Principal Components Analysis (PCA). In addition, finding out which variables contain most of the data will reduce its dimensionality too.
+
+Actions taken:
+
+A. Remove variables that contain blanks or NA, and the effect of these on the variables  
+B. Remove near zero variance variables  
+C. Remove descriptor variables  
+D. Break up dataset into training and test set  
+
+### A. Remove variables that contain blanks or NA, and the effect of these on the variables
+
+``` {r echo=FALSE} 
+notEmptyVariables <- apply (pml, 2, function(col) {
+  sum(col !="", na.rm = TRUE) 
+})
+namesToKeep <- names(notEmptyVariables[notEmptyVariables!=406])
+pml1 <- pml[namesToKeep]
+
+```
+
+`r 100-length(namesToKeep)` variables  contained 2% (406 out of 19,622 values) of all data. Thus we can ignore this set of variables without affecting the predictions too much. 
+
+Dimension size: `r length(namesToKeep)`
+
+
+``` {r} 
+notEmptyVariables
+```
+
+
+### B. Remove near zero variance variables 
+
+```{r echo=FALSE}
+  nzv <- nearZeroVar(pml1)
+  
+  pml2 <- pml1[,-nzv]
+```
+
+PCA works best on variables with a large amount of variance, hence variables with very little variance could be considered as having no effect on the classification. Hene they can be removed. 
+
+Running nearZeroVar() showed `r length(nzv) ` variables that had very little variance. This means that we can remove this set of variables as they do not help to predict the outcome. 
+
+Dimension size: `r ncol(pml2)`
+
+### C. Remove descriptor variables
+
+``` {r echo=FALSE}
+  pml3 <- pml2[, !(colnames(pml2) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "num_window"))]
+```
+  
+Remove the 6 variables ("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "num_window") used to describe & categorise the dataset as they are not needed to predict an outcome. 
+
+Dimension size: `r ncol(pml3)` 
+
+### 53 Variables to predict on Classe
+
+`r colnames(pml3) `
+
+### D.	Break up dataset into training and test set
+
+``` {r eval=FALSE}
+
+inTrain <- createDataPartition(pml3$classe, p=0.6, list=FALSE)
+pmlTrain <- pml3[inTrain,]
+pmlTest <- pml3[-inTrain,]
+
+```
+
+
+60% of the dataset is used for training with the remainder broken up into test datasets. The respective number of rows in each dataset is:
+
+1. Training set: `r nrow(pmlTrain)`
+2. Test set: `r nrow(pmlTest)`
+
+
+## 2.	Prediction Model and Assumptions
+
+This is essentially a classification problem with supervised learning. I settled on using Random Forest classifier model. At the same time, I will be using PCA to reduce dimensonality. 
+
+A.	Primary Components Analysis 
+B.	Random Forest Prediction
+
+### A.	Primary Components Analysis 
+
+As variable Values  are quite diverse. I scale the variables to mean 0 and std deviation of 1 before running PCA. 
+
+``` {r echo=FALSE}
+
+  scale.pmlTrain <- scale(pmlTrain[,1:52])
+  pml.pca <- prcomp(scale.pmlTrain, center = TRUE, scale. = TRUE) 
+  
+
+```
+
+There are 12 PCA components with eigenvalues greater than 1 (see Screeplot). These 12 PCA components account for 81% of all variance in the data. Hence we will be using these components in our Random Forest model.
+
+``` {r}  
+  summary(pml.pca) 
+  
+  fviz_screeplot(pml.pca, ncp=30, choice="eigenvalue", addlabels=TRUE) + labs(title = "Eigenvalues of Dataset")
+```
+
+
+### B.	Random Forest Model
+
+Now that we have our PCA components. It's time to create the Random Forest Model.The code below shows how we'd use our PCA Components to create & train the model - rfFit.
+
+This required 34.7 minutes to execute. 
+
+``` {r eval=FALSE}
+
+# Random Forest with PCA
+trans = preProcess(scale.pmlTrain, method="pca", pcaComp = 13)
+trainPC = predict(trans, scale.pmlTrain)
+
+# build the random forest model 
+rfFit = train(pmlTrain$classe~., method="rf", data=trainPC)
+
+```  
+
+``` {r echo=FALSE}
+
+# Random Forest with PCA
+trans = preProcess(scale.pmlTrain, method="pca", pcaComp = 12)
+trainPC = predict(trans, scale.pmlTrain)
+
+
+```
+
+
+### C. How Accurate is it?
+
+``` {r echo=FALSE, message=FALSE}
+## Testing RF model on test dataset
+# scale test dataset 
+scale.pmlTest <- scale(pmlTest[,1:52])
+
+# Predict classe with preprocessed trans on PMLTest
+testPC = predict(trans, scale.pmlTest)
+
+# confusion matrix to get accuracy of RF model on test data
+cm <- confusionMatrix(pmlTest$classe, predict(rfFit, testPC))
+```
+
+Now the Test set (*pml.test*, 20% of the dataset) is used to get an idea of the model's accuracy. This is shown in the confusion matrix below. It is `r format(round(cm$overall["Accuracy"]*100, 2))`% accurate.
+
+``` {r}
+cm
+```
+
+### D. Out-of-sample error rate
+
+``` {r echo=FALSE}
+missClass = function(values, predicted) { sum(predicted != values) / length(values)}
+OOS_errRate = missClass(pmlTest$classe, predict(rfFit, testPC))
+
+``` 
+The Out-of-Sample Error Rate is simply 100% - model accuracy. It stands at `r format(round(OOS_errRate*100, 2))`%. 
+
+``` {r eval=FALSE}
+missClass = function(values, predicted) { sum(predicted != values) / length(values)}
+OOS_errRate = missClass(pmlTest$classe, predict(rfFit, testPC))
+
+``` 
+
+
+## Conclusion
+
+This model correctly predicted 20 observations of the testing data set from the Project Submission Page. 
+
+However, two things stood out: 
+
+1. The Error Rate seems quite high (`r format(round(OOS_errRate*100, 2))`%)
+2. It took a long while to generate this model (34.7 min)
+
+Instead of using PCA to reduce dimensionality, I'd like to explore other ways to reduce the variable set without sacrificing accuracy and speed. 
+
+
+## Appendix A: Program Code
+
+```{r eval=FALSE}
+
+## Program Code
+
+library(xlsx)
+library(caret)
+
+pml <- read.csv("data/pml-training.csv")
+
+# What's in pml?
+# Summary, head, structure (str) 
+
+head(pml)
+summary(pml)
+str(pml)
+
+## Find columns that have near zero variance 
+
+nzv <- nearZeroVar(pml)
+length(nzv) 
+
+pml1 <- pml[,-nzv]
+
+# Which columns have lots of NAs and empty values? 
+#a <- apply (pml, 2, function(col) {
+#  sum(!is.na(col)) 
+#})
+
+notEmptyVariables <- apply (pml1, 2, function(col) {
+  sum(col !="", na.rm = TRUE) 
+})
+
+## for review >> write.xlsx(b, "data/na2.xlsx")
+
+## 100 vars have lots of NAs & empty values (about 98% of the column is NA). What's the effect on Classe?
+# Ans: Unlikely. Because of... the spread of classe? Why and how can you say so?
+## Not accurate >> Some columns (e.g. Kurtosis do not have NAs but blanks)
+
+#table(pml[!is.na(pml$max_yaw_arm),]$classe)
+
+# Removing columns with names from emptyVariables 
+namesToKeep <- names(notEmptyVariables[notEmptyVariables!=406])
+pml2 <- pml1[namesToKeep]
+
+
+# C. Remove descriptor variables
+
+pml3 <- pml2[, !(colnames(pml2) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "num_window"))]
+
+
+# D. Break up into training and test sets
+
+inTrain <- createDataPartition(pml3$classe, p=0.6, list=FALSE)
+pmlTrain <- pml3[inTrain,]
+pmlTest <- pml3[-inTrain,]
+
+nrow(pmlTrain)
+nrow(pmlTest)
+
+# Find PCA 
+scale.pmlTrain <- scale(pmlTrain[,1:52])
+pml.pca <- prcomp(scale.pmlTrain, center = TRUE, scale. = TRUE) 
+
+print(pml.pca)
+summary(pml.pca) 
+plot(pml.pca, type = "l")
+
+# Random Forest with PCA
+trans = preProcess(scale.pmlTrain, method="pca", pcaComp = 12)
+trainPC = predict(trans, scale.pmlTrain)
+
+# build the random forest model 
+rfFit = train(pmlTrain$classe~., method="rf", data=trainPC)
+
+## Testing RF model on test dataset
+# scale test dataset 
+scale.pmlTest <- scale(pmlTest[,1:52])
+
+# Predict classe with preprocessed trans on PMLTest
+testPC = predict(trans, scale.pmlTest)
+
+# confusion matrix to get accuracy of RF model on test data
+confusionMatrix(pmlTest$classe, predict(rfFit, testPC))
+
+```
