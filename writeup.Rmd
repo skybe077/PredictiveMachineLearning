@@ -199,7 +199,7 @@ testPC = predict(trans, scale.pmlTest)
 cm <- confusionMatrix(pmlTest$classe, predict(rfFit, testPC))
 ```
 
-Now the Test set (*pml.test*, 20% of the dataset) is used to get an idea of the model's accuracy. This is shown in the confusion matrix below. It is `r format(round(cm$overall["Accuracy"]*100, 2))`% accurate.
+Now the Test set (*pml.test*, 40% of the dataset) is used to get an idea of the model's accuracy. This is shown in the confusion matrix below. It is `r format(round(cm$overall["Accuracy"]*100, 2))`% accurate.
 
 ``` {r}
 cm
